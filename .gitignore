@@ -1,2 +1,6 @@
 xthi
 xthi.nompi
+# Directories used for CMake & CLion work
+/build
+/cmake-build-debug
+/.idea
