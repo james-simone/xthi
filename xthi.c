@@ -244,6 +244,7 @@ void output_records(const char *records, int count, const char **heads) {
     for (int k=0; k < count; ++k) {
         format_record(records + RECORD_SIZE * k, widths, heads);
     }
+    fflush(stdout);
 }
 
 /* Helper to check and update the current field widths for the given record */
