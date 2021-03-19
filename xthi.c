@@ -1,3 +1,8 @@
+/*
+ * xthi - alternative implementation for the School of Physics & Astronomy
+ *
+ * Full details: https://git.ecdf.ed.ac.uk/dmckain/xthi
+ */
 #ifdef __linux__
 #define _GNU_SOURCE
 #endif

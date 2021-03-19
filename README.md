@@ -113,8 +113,6 @@ https://github.com/karelzak/util-linux
 
 ## License
 
-I'm going to go with GPL 2.0 for my version of the code.
-
 None of the original xthi codes came with an obviously visible license
 so I'm not sure of their original license.
 
