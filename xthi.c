@@ -20,10 +20,21 @@
 #define RECORD_SIZE 128 // Max per-thread/process record size
 #define RECORD_WORDS 6 // Number of words in each record
 
+// Brief usage instructions
+const char *usage = "Enhanced version of Cray's wee xthi \"where am I running?\" parallel code.\n"
+                    "\n"
+                    "Usage:\n"
+                    "     xthi [cpu_chew_seconds]\n"
+                    "*or* xthi.nompi [cpu_chew_seconds]\n"
+                    "\n"
+                    "Full details: https://git.ecdf.ed.ac.uk/dmckain/xthi\n";
+
+void do_xthi(long chew_cpu_secs);
 void output_records(const char *records, int count, const char **heads);
 void update_widths(size_t *widths, const char *record);
 void format_record(const char *record, const size_t *sizes, const char **heads);
-void chew_cpu(int duration_secs);
+void chew_cpu(long chew_cpu_secs);
+int parse_args(int argc, char *argv[], long *chew_cpu_secs);
 #ifdef __linux__
 char *cpuset_to_cstr(cpu_set_t *mask, char *str);
 #endif
@@ -42,32 +53,38 @@ static const int is_mpi = 0;
 
 
 int main(int argc, char *argv[]) {
-    int mpi_rank = -1;
-    int num_threads = -1;
-    int chew_cpu_secs = 0;
-    int exit_code = EXIT_FAILURE;
-    char *thread_data = NULL;
+    int exit_code = EXIT_SUCCESS;
+    long chew_cpu_secs = 0L;
+#ifndef NO_MPI
+    MPI_Init(&argc, &argv);
+#endif
+
+    if (parse_args(argc, argv, &chew_cpu_secs)) {
+        // Command line args are good => do xthi work
+        do_xthi(chew_cpu_secs);
+    }
+    else {
+        // Bad args => return failure
+        exit_code = EXIT_FAILURE;
+    }
 
 #ifndef NO_MPI
+    MPI_Finalize();
+#endif
+    return exit_code;
+}
+
+
+/* Main xthi work - the fun stuff lives here! */
+void do_xthi(long chew_cpu_secs) {
+    int mpi_rank = -1;
+    int num_threads = -1;
+    char *thread_data = NULL;
+#ifndef NO_MPI
     int mpi_size;
-    MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
 #endif
-
-    // Read in command line args
-    // NOTE: Currently just CPU chew duration, but might become more exciting later
-    if (argc>2) {
-        fprintf(stderr, "Usage: xthi [cpu_chew_seconds]\n");
-        goto EXIT;
-    }
-    if (argc==2) {
-        chew_cpu_secs = atoi(argv[1]);
-        if (chew_cpu_secs < 0) {
-            fprintf(stderr, "CPU chew time must be positive\n");
-            goto EXIT;
-        }
-    }
 
     // Get short part of hostname
     // NB: gethostname() doesn't necessarily null terminate on truncation, so add explicit terminator
@@ -163,20 +180,124 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // If we got here then everything is good
-    exit_code = EXIT_SUCCESS;
-
-    // Tidy up and exit.
-    // I've done this as a goto (normally yuck!) since this includes
-    // some conditional MPI stuff
-    EXIT:
-    if (thread_data)
-        free(thread_data);
-#ifndef NO_MPI
-    MPI_Finalize();
-#endif
-    return exit_code;
+    // Tidy up
+    free(thread_data);
 }
+
+
+/* Chews CPU for roughly (i.e. at least) the given number of seconds */
+void chew_cpu(const long chew_cpu_secs) {
+    time_t start, end;
+    time(&start);
+    volatile int count = 0;
+    do {
+        for (int i=0; i<100000; ++i)
+            ;
+        ++count;
+        time(&end);
+    } while (difftime(end, start) < chew_cpu_secs);
+}
+
+
+/* Outputs all of the accumulated data in a reasonably nice formatted fashion
+ *
+ * Params:
+ * records: flattened string-delimited data, as gathered in main()
+ * count: number of records within the data array
+ * heads: headings to output, a NULL suppresses a particular record
+ */
+void output_records(const char *records, int count, const char **heads) {
+    // Calculate widths for formatting
+    size_t widths[RECORD_WORDS] = { 0 };
+    for (int k=0; k < count; ++k) {
+        update_widths(widths, records + RECORD_SIZE * k);
+    }
+
+    // Output formatted messages
+    for (int k=0; k < count; ++k) {
+        format_record(records + RECORD_SIZE * k, widths, heads);
+    }
+    fflush(stdout);
+}
+
+
+/* Helper to check and update the current field widths for the given record */
+void update_widths(size_t *widths, const char *record) {
+    int cur_word = 0; // Current word index
+    size_t cur_len = 0; // Length of current word
+    do {
+        if (*record == '\0' || *record == ' ') {
+            // End of word / record
+            assert(cur_word < RECORD_WORDS);
+            if (cur_len > widths[cur_word]) {
+                widths[cur_word] = cur_len;
+            }
+            ++cur_word;
+            cur_len = 0;
+        }
+        else {
+            // Inside a word
+            ++cur_len;
+        }
+    } while (*record++);
+}
+
+
+/* Formats the given record */
+void format_record(const char *record, const size_t *sizes, const char **heads) {
+    int cur_word = 0; // Current word index
+    const char *wordstart = record; // Start of current word
+    do {
+        if (*record == '\0' || *record == ' ') {
+            // End of word/record
+            assert((size_t) cur_word < sizeof(sizes));
+            assert((size_t) cur_word < sizeof(heads));
+            if (heads[cur_word]) {
+                printf("%s=", heads[cur_word]);
+                for (size_t j = 0; j < sizes[cur_word] - (record - wordstart); ++j) {
+                    putchar(' ');
+                }
+                while (wordstart < record) {
+                    putchar(*wordstart++);
+                }
+                if (*record == ' ') {
+                    printf("  ");
+                }
+            }
+            wordstart = record + 1;
+            ++cur_word;
+        }
+    } while (*record++);
+    putchar('\n');
+}
+
+
+/* Parses command line arguments.
+ *
+ * Just chew_cpu_secs for now, but might become more exciting later!
+ *
+ * Returns 1 if all good, 0 otherwise.
+ */
+int parse_args(int argc, char *argv[], long *chew_cpu_secs) {
+    if (argc>2) {
+        fputs(usage, stderr);
+        return 0;
+    }
+    if (argc==2) {
+        char **endptr = &argv[1];
+        *chew_cpu_secs = strtol(argv[1], endptr, 10);
+        if (**endptr != '\0') {
+            fputs(usage, stderr);
+            return 0;
+        }
+        if (*chew_cpu_secs < 0) {
+            fprintf(stderr, "%s: CPU chew time '%s' must be positive\n", argv[0], argv[1]);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 
 /* Formats a CPU affinity mask in a nice way
  *
@@ -215,86 +336,3 @@ char *cpuset_to_cstr(cpu_set_t *mask, char *str) {
     return str;
 }
 #endif
-
-/* Chews CPU for roughly (i.e. at least) the given number of seconds */
-void chew_cpu(const int duration_secs) {
-    time_t start, end;
-    time(&start);
-    volatile int count = 0;
-    do {
-        for (int i=0; i<100000; ++i)
-            ;
-        ++count;
-        time(&end);
-    } while (difftime(end, start) < duration_secs);
-}
-
-/* Outputs all of the accumulated data in a reasonably nice formatted fashion
- *
- * Params:
- * records: flattened string-delimited data, as gathered in main()
- * count: number of records within the data array
- * heads: headings to output, a NULL suppresses a particular record
- */
-void output_records(const char *records, int count, const char **heads) {
-    // Calculate widths for formatting
-    size_t widths[RECORD_WORDS] = { 0 };
-    for (int k=0; k < count; ++k) {
-        update_widths(widths, records + RECORD_SIZE * k);
-    }
-
-    // Output formatted messages
-    for (int k=0; k < count; ++k) {
-        format_record(records + RECORD_SIZE * k, widths, heads);
-    }
-    fflush(stdout);
-}
-
-/* Helper to check and update the current field widths for the given record */
-void update_widths(size_t *widths, const char *record) {
-    int cur_word = 0; // Current word index
-    size_t cur_len = 0; // Length of current word
-    do {
-        if (*record == '\0' || *record == ' ') {
-            // End of word / record
-            assert(cur_word < RECORD_WORDS);
-            if (cur_len > widths[cur_word]) {
-                widths[cur_word] = cur_len;
-            }
-            ++cur_word;
-            cur_len = 0;
-        }
-        else {
-            // Inside a word
-            ++cur_len;
-        }
-    } while (*record++);
-}
-
-/* Formats the given record */
-void format_record(const char *record, const size_t *sizes, const char **heads) {
-    int cur_word = 0; // Current word index
-    const char *wordstart = record; // Start of current word
-    do {
-        if (*record == '\0' || *record == ' ') {
-            // End of word/record
-            assert((size_t) cur_word < sizeof(sizes));
-            assert((size_t) cur_word < sizeof(heads));
-            if (heads[cur_word]) {
-                printf("%s=", heads[cur_word]);
-                for (size_t j = 0; j < sizes[cur_word] - (record - wordstart); ++j) {
-                    putchar(' ');
-                }
-                while (wordstart < record) {
-                    putchar(*wordstart++);
-                }
-                if (*record == ' ') {
-                    printf("  ");
-                }
-            }
-            wordstart = record + 1;
-            ++cur_word;
-        }
-    } while (*record++);
-    putchar('\n');
-}
