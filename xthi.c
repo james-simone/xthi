@@ -83,6 +83,9 @@ int main(int argc, char *argv[]) {
     thread_data = malloc(sizeof(char) * omp_get_max_threads() * RECORD_SIZE);
     #pragma omp parallel default(none) shared(hostname_buf, mpi_rank, thread_data, num_threads)
     {
+        // Let each thread do a short CPU chew
+        chew_cpu(0);
+
         #pragma omp master
         num_threads = omp_get_num_threads();
 
@@ -213,7 +216,7 @@ char *cpuset_to_cstr(cpu_set_t *mask, char *str) {
 }
 #endif
 
-/* Chews CPU for (at least) the given number of seconds */
+/* Chews CPU for roughly (i.e. at least) the given number of seconds */
 void chew_cpu(const int duration_secs) {
     time_t start, end;
     time(&start);
