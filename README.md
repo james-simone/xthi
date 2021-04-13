@@ -85,19 +85,41 @@ However note that the MPI version of the code has been compiled with OpenMPI,
 so will only work with OpenMPI. If you want to use it with Intel MPI or MPICH
 then you'll need to compile your own copy. See below for details on compiling.
 
-## Compiling
+## Compiling with Make
 
-I've provided a simple `Makefile` for building this on the SoPA Ubuntu Linux platform.
-(This is also used to generate the corresponding Debian package.)
+I've provided a simple `Makefile` for building this on the SoPA Ubuntu Linux platform
+using OpenMPI. (This is also used to generate the corresponding Debian package.)
 
-This `Makefile` also works on the SoPA Scientific Linux 7, though you'll need to load
-an MPI implementation first. For example: `module load openmpi`.
-
-I've also provided a `CMakeLists.txt` for using this with CMake.
+This `Makefile` also works on the SoPA Scientific Linux 7 platform, though you'll
+need to load an MPI implementation first, for example: `module load openmpi`.
 
 This code has been written for Linux: some of the CPU affinity & NUMA functionality
 uses specific Linux & glibc functions. I've tried to delimit these with C pre-processor
 conditionals, so the code should build OK on macOS, albeit with reduced reporting capability.
+
+## Compiling with CMake
+
+I've also provided a `CMakeLists.txt` for using this with CMake.
+
+Here are some examples of how you can use this on the SoPA Ubuntu Linux platform:
+
+```sh
+mkdir -p build
+cd build
+
+# To use OpenMPI
+cmake ..
+make
+
+# To use MPICH
+cmake -DMPI_C_COMPILER=mpicc.mpich ..
+make
+
+# To use Intel MPI
+module load intel/mpi/2021.2.0
+cmake
+make
+```
 
 ## Original Sources
 
