@@ -23,6 +23,9 @@
 #ifdef CUDA
 #include <cuda_runtime.h>
 #endif
+#ifdef HIP
+#include <hip/hip_runtime.h>
+#endif
 
 #define HOSTNAME_MAX_LENGTH 64 // Max hostname length before truncation
 #define RECORD_SIZE 512 // Max per-thread/process record size
@@ -67,6 +70,11 @@ static const int is_cuda = 1;
 #else
 static const int is_cuda = 0;
 #endif
+#ifdef HIP
+static const int is_hip = 1;
+#else
+static const int is_hip = 0;
+#endif
 
 int main(int argc, char *argv[]) {
   int exit_code = EXIT_SUCCESS;
@@ -90,6 +98,42 @@ int main(int argc, char *argv[]) {
   return exit_code;
 }
 
+#ifdef CUDA
+void query_devices(char *gpu_ids, int buflen) {
+  int dev, deviceCount = 0;
+  char gpu_id[DEV_ID_LENGTH];
+  cudaGetDeviceCount(&deviceCount);
+  if(deviceCount) {
+    for (dev=0; dev<deviceCount; ++dev) {
+      cudaSetDevice(dev);
+      cudaDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
+      strncat(gpu_ids,gpu_id,buflen);
+      if(dev < deviceCount-1)
+	strncat(gpu_ids,";",buflen);
+    }
+  } else {
+    strncat(gpu_ids,"None",buflen);
+  }
+}
+#endif
+#ifdef HIP
+void query_devices(char *gpu_ids, int buflen) {
+  int dev, deviceCount = 0;
+  char gpu_id[DEV_ID_LENGTH];
+  hipGetDeviceCount(&deviceCount);
+  if(deviceCount) {
+    for (dev=0; dev<deviceCount; ++dev) {
+      hipSetDevice(dev);
+      hipDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
+      strncat(gpu_ids,gpu_id,buflen);
+      if(dev < deviceCount-1)
+        strncat(gpu_ids,";",buflen);
+    }
+  } else {
+    strncat(gpu_ids,"None",buflen);
+  }
+}
+#endif
 
 /* Main xthi work - the fun stuff lives here! */
 void do_xthi(long chew_cpu_secs) {
@@ -141,24 +185,11 @@ void do_xthi(long chew_cpu_secs) {
     int numa_node = -1;
     char *cpu_affinity_buf = "-";
 #endif
-#ifdef CUDA
-    int dev, deviceCount = 0;
-    char gpu_id[DEV_ID_LENGTH];
+#if defined(CUDA) || defined(HIP)
     const int dbuflen = MAX_DEVICES*(DEV_ID_LENGTH+1)+1;
     char gpu_ids[dbuflen];
     gpu_ids[0] = 0;
-    cudaGetDeviceCount(&deviceCount);
-    if(deviceCount) {
-      for (dev=0; dev<deviceCount; ++dev) {
-	cudaSetDevice(dev);
-	cudaDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
-	strncat(gpu_ids,gpu_id,dbuflen);
-	if(dev < deviceCount-1)
-	  strncat(gpu_ids,";",dbuflen);
-      }
-    } else {
-      strncat(gpu_ids,"None",dbuflen);
-    }
+    query_devices(gpu_ids,dbuflen);
 #else
     char *gpu_ids = (char*) NULL;
 #endif
@@ -179,7 +210,7 @@ void do_xthi(long chew_cpu_secs) {
     is_linux ? "CPU" : NULL,
     is_linux ? "NUMA-Node" : NULL,
     is_linux ? "CPU-Affinity" : NULL,
-    is_cuda  ? "GPU-IDs" : NULL,
+    ( is_cuda || is_hip ) ? "GPU-IDs" : NULL,
   };
 
   // Aggregate and output result
