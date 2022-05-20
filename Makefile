@@ -1,9 +1,10 @@
-prefix=/usr
+prefix=/usr/local/xthi
 
 CC=gcc
 MPICC=mpicc
-CFLAGS=-fopenmp -Wall -Wpedantic -std=c99
-LDFLAGS=-lnuma
+CUDA_HOME=/usr/local/cuda
+CFLAGS=-fopenmp -Wall -Wpedantic -std=c99 -DCUDA -I$(CUDA_HOME)/include
+LDFLAGS=-lnuma -L$(CUDA_HOME)/lib64 -lcudart
 
 all: xthi xthi.nompi
 
