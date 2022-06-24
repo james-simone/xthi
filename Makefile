@@ -2,9 +2,10 @@ prefix=/usr/local/xthi
 
 CC=gcc
 MPICC=mpicc
-CUDA_PATH=/usr/local/cuda
-CFLAGS=-fopenmp -Wall -Wpedantic -std=c99 -DCUDA -I$(CUDA_PATH)/include
-LDFLAGS=-lnuma -L$(CUDA_PATH)/lib64 -lcudart
+ROCM_PATH=/opt/rocm
+HIP_ARCH=-D__HIP_ARCH_GFX90A__=1
+CFLAGS=-fopenmp -Wall -Wpedantic -std=c99 -DHIP $(HIP_ARCH) -I$(ROCM_PATH)/include
+LDFLAGS=-lnuma -L$(ROCM_PATH)/lib -lamdhip64
 
 all: xthi xthi.nompi
 
