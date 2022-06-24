@@ -3,8 +3,8 @@ prefix=/usr/local/xthi
 CC=gcc
 MPICC=mpicc
 ROCM_PATH=/opt/rocm
-HIP_ARCH=-D__HIP_ARCH_GFX90A__=1
-CFLAGS=-fopenmp -Wall -Wpedantic -std=c99 -DHIP $(HIP_ARCH) -I$(ROCM_PATH)/include
+HIP_ARCH="-D__HIP_ARCH_GFX90A__=1"
+CFLAGS=-fopenmp -Wall -Wpedantic -std=c99 -DHIP -D__HIP_PLATFORM_AMD__ $(HIP_ARCH) -I$(ROCM_PATH)/include
 LDFLAGS=-lnuma -L$(ROCM_PATH)/lib -lamdhip64
 
 all: xthi xthi.nompi
