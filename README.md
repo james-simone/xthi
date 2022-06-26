@@ -1,5 +1,9 @@
 # David's alternative implementation of Cray's xthi example code
 
+## Source
+
+This repository was cloned from https://git.ecdf.ed.ac.uk/dmckain/xthi.git
+
 ## Background
 
 I attended some ARCHER2 training recently, and they used some example code from Cray
