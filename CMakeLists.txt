@@ -47,3 +47,5 @@ if("${GPU}" STREQUAL "AMD")
    target_compile_definitions(xthi.nompi PUBLIC HIP=1)
    target_link_libraries(xthi.nompi PUBLIC hip::host)
 endif()
+
+install(TARGETS xthi xthi.nompi RUNTIME)
