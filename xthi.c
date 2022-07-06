@@ -106,8 +106,12 @@ void query_devices(char *gpu_ids, int buflen) {
   if(deviceCount) {
     for (dev=0; dev<deviceCount; ++dev) {
       cudaSetDevice(dev);
+      // gpu_id [domain]:[bus]:[device].[function]
       cudaDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
-      strncat(gpu_ids,gpu_id,buflen);
+      char *beg = strstr(gpu_id,":");
+      beg++;
+      char *end = strstr(beg,".");
+      strncat(gpu_ids,beg,end-beg);
       if(dev < deviceCount-1)
 	strncat(gpu_ids,";",buflen);
     }
@@ -125,7 +129,10 @@ void query_devices(char *gpu_ids, int buflen) {
     for (dev=0; dev<deviceCount; ++dev) {
       hipSetDevice(dev);
       hipDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
-      strncat(gpu_ids,gpu_id,buflen);
+      char *beg = strstr(gpu_id,":");
+      beg++;
+      char *end = strstr(beg,".");
+      strncat(gpu_ids,beg,end-beg);
       if(dev < deviceCount-1)
         strncat(gpu_ids,";",buflen);
     }
