@@ -10,6 +10,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include <unistd.h>
 #include <omp.h>
@@ -38,17 +39,17 @@ const char *usage =
   "Enhanced version of Cray's wee xthi \"where am I running?\" parallel code.\n"
   "\n"
   "Usage:\n"
-  "     xthi [cpu_chew_seconds]\n"
-  "*or* xthi.nompi [cpu_chew_seconds]\n"
+  "     xthi [cpu_chew_seconds] [--map-gpu-by-rank]\n"
+  "*or* xthi.nompi [cpu_chew_seconds] [--map-gpu-by-rank]\n"
   "\n"
   "Full details: https://git.ecdf.ed.ac.uk/dmckain/xthi\n";
 
-void do_xthi(long chew_cpu_secs);
+void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank);
 void output_records(const char *records, int count, const char **heads);
 void update_widths(size_t *widths, const char *record);
 void format_record(const char *record, const size_t *sizes, const char **heads);
 void chew_cpu(long chew_cpu_secs);
-int parse_args(int argc, char *argv[], long *chew_cpu_secs);
+int parse_args(int argc, char *argv[], long *chew_cpu_secs, int *flag_gpu_by_rank);
 #ifdef __linux__
 char *cpuset_to_cstr(cpu_set_t *mask, char *str);
 #endif
@@ -79,13 +80,14 @@ static const int is_hip = 0;
 int main(int argc, char *argv[]) {
   int exit_code = EXIT_SUCCESS;
   long chew_cpu_secs = 0L;
+  int flag_gpu_by_rank = 0;
 #ifndef NO_MPI
   MPI_Init(&argc, &argv);
 #endif
 
-  if (parse_args(argc, argv, &chew_cpu_secs)) {
+  if (parse_args(argc, argv, &chew_cpu_secs, &flag_gpu_by_rank)) {
   // Command line args are good => do xthi work
-    do_xthi(chew_cpu_secs);
+    do_xthi(chew_cpu_secs, flag_gpu_by_rank);
   }
   else {
     // Bad args => return failure
@@ -99,12 +101,17 @@ int main(int argc, char *argv[]) {
 }
 
 #ifdef CUDA
-void query_devices(char *gpu_ids, int buflen) {
+void query_devices(char *gpu_ids, int buflen, int mpi_rank, int flag_gpu_by_rank) {
   int dev, deviceCount = 0;
+  flag_gpu_by_rank = flag_gpu_by_rank && mpi_rank >= 0; /* flag disabled when mpi_rank < 0 (no MPI) */
   char gpu_id[DEV_ID_LENGTH];
+  gpu_id[0] = 0;
   cudaGetDeviceCount(&deviceCount);
   if(deviceCount) {
     for (dev=0; dev<deviceCount; ++dev) {
+      if ( flag_gpu_by_rank && mpi_rank != dev ) {
+	continue; /* when mapping by rank, skip unless dev == rank */
+      }
       cudaSetDevice(dev);
       // gpu_id [domain]:[bus]:[device].[function]
       cudaDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
@@ -112,30 +119,37 @@ void query_devices(char *gpu_ids, int buflen) {
       beg++;
       char *end = strstr(beg,".");
       strncat(gpu_ids,beg,end-beg);
-      if(dev < deviceCount-1)
+      if( ! flag_gpu_by_rank && dev < deviceCount-1)
 	strncat(gpu_ids,";",buflen);
     }
+    if ( flag_gpu_by_rank && mpi_rank >= deviceCount ) strncat(gpu_ids,"None",buflen);
   } else {
     strncat(gpu_ids,"None",buflen);
   }
 }
 #endif
 #ifdef HIP
-void query_devices(char *gpu_ids, int buflen) {
+void query_devices(char *gpu_ids, int buflen, int mpi_rank, int flag_gpu_by_rank) {
   int dev, deviceCount = 0;
+  flag_gpu_by_rank = flag_gpu_by_rank && mpi_rank >= 0; /* flag disabled when mpi_rank < 0 (no MPI) */
   char gpu_id[DEV_ID_LENGTH];
+  gpu_id[0] = 0;
   hipGetDeviceCount(&deviceCount);
   if(deviceCount) {
     for (dev=0; dev<deviceCount; ++dev) {
+      if ( flag_gpu_by_rank && mpi_rank != dev ) {
+	continue; /* when mapping by rank, skip unless dev == rank */
+      }
       hipSetDevice(dev);
       hipDeviceGetPCIBusId(gpu_id, DEV_ID_LENGTH, dev);
       char *beg = strstr(gpu_id,":");
       beg++;
       char *end = strstr(beg,".");
       strncat(gpu_ids,beg,end-beg);
-      if(dev < deviceCount-1)
-        strncat(gpu_ids,";",buflen);
+      if( ! flag_gpu_by_rank && dev < deviceCount-1)
+	strncat(gpu_ids,";",buflen);
     }
+    if ( flag_gpu_by_rank && mpi_rank >= deviceCount ) strncat(gpu_ids,"None",buflen);
   } else {
     strncat(gpu_ids,"None",buflen);
   }
@@ -143,7 +157,7 @@ void query_devices(char *gpu_ids, int buflen) {
 #endif
 
 /* Main xthi work - the fun stuff lives here! */
-void do_xthi(long chew_cpu_secs) {
+void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
   int mpi_rank = -1;
   int num_threads = -1;
   char *thread_data = NULL;
@@ -166,7 +180,7 @@ void do_xthi(long chew_cpu_secs) {
   // Each thread will store RECORD_SIZE characters, stored as a flat single array
   thread_data = (char*) malloc(sizeof(char) * omp_get_max_threads() * RECORD_SIZE);
   memset(thread_data,0,omp_get_max_threads() * RECORD_SIZE);
-#pragma omp parallel default(none) shared(hostname_buf, mpi_rank, thread_data, num_threads)
+#pragma omp parallel default(none) shared(hostname_buf, mpi_rank, thread_data, num_threads, flag_gpu_by_rank)
   {
     // Let each thread do a short CPU chew
     chew_cpu(0);
@@ -196,7 +210,7 @@ void do_xthi(long chew_cpu_secs) {
     const int dbuflen = MAX_DEVICES*(DEV_ID_LENGTH+1)+1;
     char gpu_ids[dbuflen];
     gpu_ids[0] = 0;
-    query_devices(gpu_ids,dbuflen);
+    query_devices(gpu_ids,dbuflen,mpi_rank,flag_gpu_by_rank);
 #else
     char *gpu_ids = (char*) NULL;
 #endif
@@ -357,26 +371,35 @@ void format_record(const char *record, const size_t *sizes, const char **heads) 
 
 /* Parses command line arguments.
  *
- * Just chew_cpu_secs for now, but might become more exciting later!
- *
  * Returns 1 if all good, 0 otherwise.
  */
-int parse_args(int argc, char *argv[], long *chew_cpu_secs) {
-  if (argc>2) {
-    fputs(usage, stderr);
-    return 0;
-  }
-  if (argc==2) {
-    char **endptr = &argv[1];
-    *chew_cpu_secs = strtol(argv[1], endptr, 10);
-    if (**endptr != '\0') {
+int parse_args(int argc, char *argv[], long *chew_cpu_secs, int *flag_gpu_by_rank) {
+  /* parse option flags */
+  *chew_cpu_secs = 0L; /* default */
+  *flag_gpu_by_rank = 0; /* default */
+  int arg;
+  for (arg=1; arg<argc; ++arg) {
+    if ( strcmp(argv[arg],"--help") == 0 || strcmp(argv[arg],"-h") == 0 ) {
       fputs(usage, stderr);
       return 0;
     }
-    if (*chew_cpu_secs < 0) {
-      fprintf(stderr, "%s: CPU chew time '%s' must be positive\n", argv[0], argv[1]);
-      return 0;
+    if ( strcmp(argv[arg],"--map-gpu-by-rank") == 0 ) {
+      *flag_gpu_by_rank = 1;
+      continue;
     }
+    if ( isdigit(argv[arg][0]) ) { /* numeric => chew_cpu_secs */ 
+      char **endptr = &argv[arg];
+      *chew_cpu_secs = strtol(argv[arg], endptr, 10);
+      if (**endptr != '\0') {
+	fputs(usage, stderr);
+	return 0;
+      }
+      continue;
+    }
+    /* else, it's an unknown arg */
+    fprintf(stderr, "%s: unknown argument '%s'\n", argv[0], argv[arg]);
+    fputs(usage, stderr);
+    return 0;
   }
   return 1;
 }
