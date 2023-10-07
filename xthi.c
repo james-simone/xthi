@@ -159,12 +159,20 @@ void query_devices(char *gpu_ids, int buflen, int mpi_rank, int flag_gpu_by_rank
 /* Main xthi work - the fun stuff lives here! */
 void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
   int mpi_rank = -1;
+  int mpi_local_rank = -1;
   int num_threads = -1;
   char *thread_data = NULL;
 #ifndef NO_MPI
   int mpi_size;
+  int mpi_local_nrank;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+  // determine the node-local MPI rank and number of ranks
+  MPI_Comm node_comm;
+  MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,mpi_rank,MPI_INFO_NULL,&node_comm);
+  MPI_Comm_rank(node_comm,&mpi_local_rank);
+  MPI_Comm_size(node_comm,&mpi_local_nrank);
+  printf("%d/%d %d/%d\n",mpi_rank,mpi_size,mpi_local_rank,mpi_local_nrank);
 #endif
 
   // Get short part of hostname
@@ -180,7 +188,7 @@ void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
   // Each thread will store RECORD_SIZE characters, stored as a flat single array
   thread_data = (char*) malloc(sizeof(char) * omp_get_max_threads() * RECORD_SIZE);
   memset(thread_data,0,omp_get_max_threads() * RECORD_SIZE);
-#pragma omp parallel default(none) shared(hostname_buf, mpi_rank, thread_data, num_threads, flag_gpu_by_rank)
+#pragma omp parallel default(none) shared(hostname_buf, mpi_rank, mpi_local_rank, thread_data, num_threads, flag_gpu_by_rank)
   {
     // Let each thread do a short CPU chew
     chew_cpu(0);
@@ -210,7 +218,7 @@ void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
     const int dbuflen = MAX_DEVICES*(DEV_ID_LENGTH+1)+1;
     char gpu_ids[dbuflen];
     gpu_ids[0] = 0;
-    query_devices(gpu_ids,dbuflen,mpi_rank,flag_gpu_by_rank);
+    query_devices(gpu_ids,dbuflen,mpi_local_rank,flag_gpu_by_rank);
 #else
     char *gpu_ids = (char*) NULL;
 #endif
