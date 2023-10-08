@@ -39,8 +39,8 @@ const char *usage =
   "Enhanced version of Cray's wee xthi \"where am I running?\" parallel code.\n"
   "\n"
   "Usage:\n"
-  "     xthi [cpu_chew_seconds] [--map-gpu-by-rank]\n"
-  "*or* xthi.nompi [cpu_chew_seconds] [--map-gpu-by-rank]\n"
+  "     xthi [cpu_chew_seconds] [--no-map-gpu-by-rank]\n"
+  "*or* xthi.nompi [cpu_chew_seconds] [--no-map-gpu-by-rank]\n"
   "\n"
   "Full details: https://git.ecdf.ed.ac.uk/dmckain/xthi\n";
 
@@ -162,33 +162,40 @@ void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
   int mpi_local_rank = -1;
   int num_threads = -1;
   char *thread_data = NULL;
+  int mpi_size = 1;
 #ifndef NO_MPI
-  int mpi_size;
-  int mpi_local_nrank;
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
-  // determine the node-local MPI rank and number of ranks
-  MPI_Comm node_comm;
-  MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,mpi_rank,MPI_INFO_NULL,&node_comm);
-  MPI_Comm_rank(node_comm,&mpi_local_rank);
-  MPI_Comm_size(node_comm,&mpi_local_nrank);
-  printf("%d/%d %d/%d\n",mpi_rank,mpi_size,mpi_local_rank,mpi_local_nrank);
 #endif
 
   // Get short part of hostname
   // NB: gethostname() doesn't necessarily null terminate on truncation, so add explicit terminator
-  char hostname_buf[HOSTNAME_MAX_LENGTH + 1];
-  hostname_buf[HOSTNAME_MAX_LENGTH] = '\0';
-  gethostname(hostname_buf, HOSTNAME_MAX_LENGTH);
-  char *dot_ptr = strchr(hostname_buf, '.');
+  char* hostname_buf;
+  hostname_buf = (char* )(calloc(mpi_size,(HOSTNAME_MAX_LENGTH + 1)*sizeof(char))); // all nodes
+  char* myname = hostname_buf;
+  if(mpi_rank >= 0)
+    myname = hostname_buf + mpi_rank * (HOSTNAME_MAX_LENGTH + 1);
+  gethostname(myname, HOSTNAME_MAX_LENGTH);
+  char *dot_ptr = strchr(myname, '.');
   if (dot_ptr != NULL)
     *dot_ptr = '\0';
+#ifndef NO_MPI
+  MPI_Allgather(myname,(HOSTNAME_MAX_LENGTH + 1),MPI_CHAR,
+		hostname_buf,(HOSTNAME_MAX_LENGTH + 1),MPI_CHAR,MPI_COMM_WORLD);
+  // determine host-local MPI rank
+  for(int r=0; r<=mpi_rank; ++r) {
+    char* name = hostname_buf+(HOSTNAME_MAX_LENGTH + 1)*r;
+    if(strncmp(myname,name,HOSTNAME_MAX_LENGTH) == 0)
+      mpi_local_rank++;
+  }
+  //printf("%s %d %d\n",myname,mpi_rank,mpi_local_rank);
+#endif
 
   // Launch OpenMP threads and gather data
   // Each thread will store RECORD_SIZE characters, stored as a flat single array
   thread_data = (char*) malloc(sizeof(char) * omp_get_max_threads() * RECORD_SIZE);
   memset(thread_data,0,omp_get_max_threads() * RECORD_SIZE);
-#pragma omp parallel default(none) shared(hostname_buf, mpi_rank, mpi_local_rank, thread_data, num_threads, flag_gpu_by_rank)
+#pragma omp parallel default(none) shared(hostname_buf, myname, mpi_rank, mpi_local_rank, thread_data, num_threads, flag_gpu_by_rank)
   {
     // Let each thread do a short CPU chew
     chew_cpu(0);
@@ -227,7 +234,7 @@ void do_xthi(long chew_cpu_secs, int flag_gpu_by_rank) {
       // Record as a space-separated substring for easy MPI comms
       snprintf(thread_data + (thread_num * RECORD_SIZE), RECORD_SIZE,
              "%s %d %d %d %d %.50s %.128s",
-	     hostname_buf, mpi_rank, thread_num, cpu, numa_node, cpu_affinity_buf, gpu_ids);
+	     myname, mpi_rank, thread_num, cpu, numa_node, cpu_affinity_buf, gpu_ids);
     }
   }
 
@@ -384,15 +391,15 @@ void format_record(const char *record, const size_t *sizes, const char **heads) 
 int parse_args(int argc, char *argv[], long *chew_cpu_secs, int *flag_gpu_by_rank) {
   /* parse option flags */
   *chew_cpu_secs = 0L; /* default */
-  *flag_gpu_by_rank = 0; /* default */
+  *flag_gpu_by_rank = 1; /* default */
   int arg;
   for (arg=1; arg<argc; ++arg) {
     if ( strcmp(argv[arg],"--help") == 0 || strcmp(argv[arg],"-h") == 0 ) {
       fputs(usage, stderr);
       return 0;
     }
-    if ( strcmp(argv[arg],"--map-gpu-by-rank") == 0 ) {
-      *flag_gpu_by_rank = 1;
+    if ( strcmp(argv[arg],"--no-map-gpu-by-rank") == 0 ) {
+      *flag_gpu_by_rank = 0;
       continue;
     }
     if ( isdigit(argv[arg][0]) ) { /* numeric => chew_cpu_secs */ 
